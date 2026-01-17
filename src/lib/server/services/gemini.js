@@ -130,7 +130,7 @@ REQUIRED:
 Think of it like zooming in 200% on just the ${position.replace('-', ' ')} corner of the image.`;
 
 	const response = await fetch(
-		`${GEMINI_API_URL}/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${env.GOOGLE_GEMINI_API_KEY}`,
+		`${GEMINI_API_URL}/models/gemini-3-pro-image-preview:generateContent?key=${env.GOOGLE_GEMINI_API_KEY}`,
 		{
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
