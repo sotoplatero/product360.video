@@ -38,6 +38,7 @@
 		]
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "^3.970.0"
+		"@aws-sdk/client-s3": "^3.970.0",
+		"@sveltejs/adapter-vercel": "^6.3.0"
 	}
 }
