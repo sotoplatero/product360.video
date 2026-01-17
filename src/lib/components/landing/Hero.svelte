@@ -1,38 +1,96 @@
 <script>
 	import { goto } from '$app/navigation';
 
-	let productUrl = $state('');
 	let loading = $state(false);
 	let error = $state('');
-	let placeholderIndex = $state(0);
+	let isDragging = $state(false);
+	let previewUrl = $state('');
+	/** @type {File | null} */
+	let selectedFile = $state(null);
 
-	const placeholders = [
-		'https://amazon.com/dp/B09V3KXJPB',
-		'https://apple.com/shop/product/MK2E3',
-		'https://bose.com/p/headphones/qc45',
-		'https://dyson.com/hair-care/airwrap'
-	];
+	/** @type {HTMLInputElement} */
+	let fileInput;
 
-	$effect(() => {
-		const interval = setInterval(() => {
-			placeholderIndex = (placeholderIndex + 1) % placeholders.length;
-		}, 3000);
-		return () => clearInterval(interval);
-	});
+	/**
+	 * @param {File} file
+	 */
+	function handleFile(file) {
+		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+		if (!allowedTypes.includes(file.type)) {
+			error = 'Invalid file type. Use JPEG, PNG, WebP or GIF';
+			return;
+		}
 
-	/** @param {SubmitEvent} e */
-	async function handleSubmit(e) {
+		const maxSize = 10 * 1024 * 1024; // 10MB
+		if (file.size > maxSize) {
+			error = 'File too large. Maximum 10MB';
+			return;
+		}
+
+		error = '';
+		selectedFile = file;
+		previewUrl = URL.createObjectURL(file);
+	}
+
+	/** @param {DragEvent} e */
+	function handleDrop(e) {
 		e.preventDefault();
-		if (!productUrl.trim()) return;
+		isDragging = false;
+
+		const file = e.dataTransfer?.files[0];
+		if (file) handleFile(file);
+	}
+
+	/** @param {DragEvent} e */
+	function handleDragOver(e) {
+		e.preventDefault();
+		isDragging = true;
+	}
+
+	function handleDragLeave() {
+		isDragging = false;
+	}
+
+	/** @param {Event} e */
+	function handleFileSelect(e) {
+		const input = /** @type {HTMLInputElement} */ (e.target);
+		const file = input.files?.[0];
+		if (file) handleFile(file);
+	}
+
+	function clearSelection() {
+		selectedFile = null;
+		if (previewUrl) {
+			URL.revokeObjectURL(previewUrl);
+			previewUrl = '';
+		}
+		error = '';
+	}
+
+	async function handleSubmit() {
+		if (!selectedFile) return;
 
 		loading = true;
 		error = '';
 
 		try {
+			// 1. Subir imagen a R2
+			const formData = new FormData();
+			formData.append('image', selectedFile);
+
+			const uploadResponse = await fetch('/api/upload-image', {
+				method: 'POST',
+				body: formData
+			});
+
+			const uploadData = await uploadResponse.json();
+			if (!uploadResponse.ok) throw new Error(uploadData.error);
+
+			// 2. Crear generación con la URL de la imagen
 			const response = await fetch('/api/generation', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ productUrl })
+				body: JSON.stringify({ productImageUrl: uploadData.imageUrl })
 			});
 
 			const data = await response.json();
@@ -69,7 +127,7 @@
 
 		<!-- Headline -->
 		<h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-6 animate-fade-up delay-100">
-			<span class="text-white">Turn Any Product URL</span>
+			<span class="text-white">Turn Any Product Photo</span>
 			<br />
 			<span class="gradient-text">Into Stunning 360° Content</span>
 		</h1>
@@ -77,51 +135,96 @@
 		<!-- Subheadline -->
 		<p class="text-xl md:text-2xl text-gray-400 max-w-2xl mx-auto mb-12 animate-fade-up delay-200">
 			AI-powered product photography. No studio. No photographer.
-			<span class="text-white">Just paste a link.</span>
+			<span class="text-white">Just drop an image.</span>
 		</p>
 
-		<!-- URL Input Form -->
-		<form onsubmit={handleSubmit} class="max-w-2xl mx-auto mb-8 animate-fade-up delay-300">
-			<div class="relative group">
-				<!-- Gradient border on focus -->
-				<div class="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-2xl opacity-0 group-focus-within:opacity-100 blur transition duration-500"></div>
+		<!-- Image Upload Area -->
+		<div class="max-w-2xl mx-auto mb-8 animate-fade-up delay-300">
+			{#if !previewUrl}
+				<!-- Drop zone -->
+				<div
+					role="button"
+					tabindex="0"
+					ondrop={handleDrop}
+					ondragover={handleDragOver}
+					ondragleave={handleDragLeave}
+					onclick={() => fileInput.click()}
+					onkeydown={(e) => e.key === 'Enter' && fileInput.click()}
+					class="relative group cursor-pointer"
+				>
+					<!-- Gradient border -->
+					<div class="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-2xl opacity-50 group-hover:opacity-100 blur transition duration-500 {isDragging ? 'opacity-100' : ''}"></div>
 
-				<div class="relative flex items-center bg-[#171717] rounded-2xl border border-white/10 group-focus-within:border-transparent overflow-hidden">
-					<div class="flex items-center pl-5 text-gray-500">
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-						</svg>
+					<div class="relative bg-[#171717] rounded-2xl border-2 border-dashed border-white/20 p-12 transition-all {isDragging ? 'border-purple-500 bg-purple-500/10' : 'group-hover:border-white/40'}">
+						<div class="flex flex-col items-center gap-4">
+							<div class="w-16 h-16 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center">
+								<svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+								</svg>
+							</div>
+							<div>
+								<p class="text-lg text-white font-medium">Drop your product image here</p>
+								<p class="text-gray-400 mt-1">or click to browse</p>
+							</div>
+							<p class="text-sm text-gray-500">JPEG, PNG, WebP or GIF • Max 10MB</p>
+						</div>
 					</div>
-
-					<input
-						type="url"
-						bind:value={productUrl}
-						placeholder={placeholders[placeholderIndex]}
-						class="flex-1 bg-transparent px-4 py-5 text-white placeholder-gray-500 outline-none text-lg"
-						disabled={loading}
-					/>
-
-					<button
-						type="submit"
-						disabled={loading || !productUrl.trim()}
-						class="m-2 px-6 py-3 gradient-animated rounded-xl font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
-					>
-						{#if loading}
-							<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-							</svg>
-						{:else}
-							Generate
-						{/if}
-					</button>
 				</div>
-			</div>
+
+				<input
+					bind:this={fileInput}
+					type="file"
+					accept="image/jpeg,image/png,image/webp,image/gif"
+					onchange={handleFileSelect}
+					class="hidden"
+				/>
+			{:else}
+				<!-- Preview -->
+				<div class="relative group">
+					<div class="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-2xl opacity-75 blur"></div>
+
+					<div class="relative bg-[#171717] rounded-2xl p-4">
+						<div class="relative aspect-video rounded-xl overflow-hidden bg-black/50">
+							<img src={previewUrl} alt="Preview" class="w-full h-full object-contain" />
+
+							<!-- Remove button -->
+							<button
+								onclick={clearSelection}
+								disabled={loading}
+								class="absolute top-3 right-3 p-2 bg-black/60 rounded-full hover:bg-black/80 transition-colors disabled:opacity-50"
+							>
+								<svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+								</svg>
+							</button>
+						</div>
+
+						<!-- Generate button -->
+						<button
+							onclick={handleSubmit}
+							disabled={loading}
+							class="w-full mt-4 py-4 gradient-animated rounded-xl font-semibold text-white text-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
+						>
+							{#if loading}
+								<span class="flex items-center justify-center gap-3">
+									<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+										<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+										<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+									</svg>
+									Uploading...
+								</span>
+							{:else}
+								Generate 360° Content
+							{/if}
+						</button>
+					</div>
+				</div>
+			{/if}
 
 			{#if error}
 				<p class="mt-3 text-red-400 text-sm">{error}</p>
 			{/if}
-		</form>
+		</div>
 
 		<!-- Trust indicators -->
 		<div class="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-500 animate-fade-up delay-400">

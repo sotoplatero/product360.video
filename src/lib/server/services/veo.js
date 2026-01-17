@@ -8,81 +8,44 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta';
  */
 
 /**
- * Start video generation using Google Veo
+ * Start video generation using Google Veo 2.0
  * @param {Object} options
  * @param {string} options.originalImageBase64 - Original product image
- * @param {string[]} options.extractedImagesBase64 - Array of extracted quadrant images (at least 2)
+ * @param {string[]} [options.extractedImagesBase64] - Array of extracted quadrant images
  * @returns {Promise<VideoGenerationResult>}
  */
-export async function startVideoGeneration({ originalImageBase64, extractedImagesBase64 }) {
+export async function startVideoGeneration({ originalImageBase64, extractedImagesBase64 = [] }) {
 	if (!env.GOOGLE_GEMINI_API_KEY) {
 		throw new Error('GOOGLE_GEMINI_API_KEY is not configured');
 	}
 
-	if (extractedImagesBase64.length < 2) {
-		throw new Error('At least 2 extracted images are required for video generation');
-	}
+	const prompt = `Create a smooth, seamless product showcase video. The product should rotate 360 degrees on a clean white background. Slow, elegant rotation. Product stays centered. Camera stationary. Pure white studio background with soft lighting. Photorealistic quality. No audio.`;
 
-	const prompt = `Create a smooth, seamless product showcase video of the provided ecommerce. Please pay close attention to the product dimensions and marks on the provided reference image ingredients. The scaling needs to be right, so the object that we're actually showing in this video matches what that object looks like in reality. It's very important you get the hyperrealism correct here.
-
-VIDEO SPECIFICATIONS:
-- Duration: 4-6 seconds
-- Motion: Continuous smooth rotation, clockwise direction
-- Speed: Slow, elegant rotation completing one full 360° turn
-- Loop: The end frame should seamlessly connect back to the start frame for perfect looping
-
-PRODUCT & CAMERA:
-- Product stays perfectly centered throughout the entire rotation
-- Camera remains completely stationary - only the product rotates
-- Maintain consistent distance and framing - no zoom or camera movement
-- Eye-level perspective, straight-on angle
-
-LIGHTING & ENVIRONMENT:
-- Pure white background (#FFFFFF), clean studio setting
-- Soft, even studio lighting that remains constant throughout rotation
-- Subtle reflections and shadows for depth and realism
-- No harsh shadows or lighting changes during rotation
-
-QUALITY:
-- Photorealistic rendering matching the reference images
-- Preserve all product details: colors, textures, branding
-- Smooth motion with no stuttering, jumping, or warping
-- High-end e-commerce product video quality
-
-AUDIO:
-- Completely muted audio
-- No music allowed in output
-- No sound effects allowed in the output
-
-REFERENCE: Use the provided images as keyframes showing the product from different angles. The video should smoothly transition through all these views in a continuous rotation.`;
-
-	// Build reference images array
+	// Build referenceImages array - original image + extracted quadrant images (like n8n)
 	const referenceImages = [
 		{
 			image: {
 				bytesBase64Encoded: originalImageBase64,
 				mimeType: 'image/png'
 			},
-			referenceType: 'STYLE_IMAGE'
-		},
-		{
-			image: {
-				bytesBase64Encoded: extractedImagesBase64[0],
-				mimeType: 'image/png'
-			},
-			referenceType: 'STYLE_IMAGE'
-		},
-		{
-			image: {
-				bytesBase64Encoded: extractedImagesBase64[1],
-				mimeType: 'image/png'
-			},
-			referenceType: 'STYLE_IMAGE'
+			referenceType: 'asset'
 		}
 	];
 
+	// Add extracted images as additional references (up to 2 like n8n)
+	for (const imgBase64 of extractedImagesBase64.slice(0, 2)) {
+		referenceImages.push({
+			image: {
+				bytesBase64Encoded: imgBase64,
+				mimeType: 'image/png'
+			},
+			referenceType: 'asset'
+		});
+	}
+
+	// Veo 3.1 con la estructura exacta de n8n
 	const response = await fetch(
-		`${GEMINI_API_URL}/models/veo-2.0-generate-001:predictLongRunning?key=${env.GOOGLE_GEMINI_API_KEY}`,
+		`${GEMINI_API_URL}/models/veo-3.1-generate-preview:predictLongRunning?key=${env.GOOGLE_GEMINI_API_KEY}`,
 		{
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -92,9 +55,8 @@ REFERENCE: Use the provided images as keyframes showing the product from differe
 					referenceImages
 				}],
 				parameters: {
-					aspectRatio: '16:9',
 					durationSeconds: 8,
-					personGeneration: 'dont_allow'
+					personGeneration: 'allow_adult'
 				}
 			})
 		}
@@ -146,6 +108,9 @@ export async function checkVideoStatus(operationName) {
 
 	const data = await response.json();
 
+	// Log full response for debugging
+	console.log('Veo status response:', JSON.stringify(data, null, 2));
+
 	// Check if operation is complete
 	if (data.done) {
 		// Check for error
@@ -156,13 +121,24 @@ export async function checkVideoStatus(operationName) {
 			};
 		}
 
-		// Extract video URI
-		const videoUri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+		// Try multiple paths to extract video URI (different Veo versions have different response structures)
+		let videoUri =
+			// Veo 2.0 path
+			data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
+			// Alternative paths for Veo 3.x
+			data.response?.videos?.[0]?.uri ||
+			data.response?.generatedVideos?.[0]?.uri ||
+			data.result?.videos?.[0]?.uri ||
+			data.result?.generatedSamples?.[0]?.video?.uri ||
+			// Vertex AI style
+			data.response?.predictions?.[0]?.video?.uri ||
+			data.metadata?.videos?.[0]?.uri;
 
 		if (!videoUri) {
+			console.error('Full Veo response (no URI found):', JSON.stringify(data, null, 2));
 			return {
 				done: true,
-				error: 'No video URI in response'
+				error: 'No video URI in response. Check server logs for full response.'
 			};
 		}
 

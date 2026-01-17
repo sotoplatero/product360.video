@@ -8,8 +8,8 @@ export const user = sqliteTable('user', {
 // Tabla de generaciones de assets
 export const generation = sqliteTable('generation', {
 	id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-	productUrl: text('product_url').notNull(),
-	productImageUrl: text('product_image_url'),
+	productUrl: text('product_url'), // Ahora opcional - puede venir de URL o upload directo
+	productImageUrl: text('product_image_url'), // URL de la imagen del producto (de scraping o upload)
 	status: text('status').default('pending'), // pending, payment_required, processing, completed, failed
 	currentStep: text('current_step'), // scraping, generating_canvas, extracting_images, generating_video
 	paymentStatus: text('payment_status').default('pending'), // pending, completed

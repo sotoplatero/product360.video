@@ -39,23 +39,27 @@ export async function GET({ url }) {
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request }) {
 	try {
-		const { productUrl } = await request.json();
+		const { productUrl, productImageUrl } = await request.json();
 
-		if (!productUrl) {
-			return json({ error: 'productUrl is required' }, { status: 400 });
+		// Debe tener al menos una de las dos
+		if (!productUrl && !productImageUrl) {
+			return json({ error: 'productUrl or productImageUrl is required' }, { status: 400 });
 		}
 
-		// Validate URL
-		try {
-			new URL(productUrl);
-		} catch {
-			return json({ error: 'Invalid URL format' }, { status: 400 });
+		// Validar URL si se proporciona
+		if (productUrl) {
+			try {
+				new URL(productUrl);
+			} catch {
+				return json({ error: 'Invalid URL format' }, { status: 400 });
+			}
 		}
 
 		// Create new generation with payment_required status
 		const [newGeneration] = await db.insert(generation)
 			.values({
-				productUrl,
+				productUrl: productUrl || null,
+				productImageUrl: productImageUrl || null,
 				status: 'payment_required'
 			})
 			.returning();

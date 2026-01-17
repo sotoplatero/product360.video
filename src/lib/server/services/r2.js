@@ -88,3 +88,25 @@ export async function getFile(key) {
 
 	return response.Body?.transformToByteArray() ?? new Uint8Array();
 }
+
+/**
+ * Fetch an image from URL and return as base64
+ * @param {string} imageUrl - The URL of the image
+ * @returns {Promise<{base64: string, mimeType: string}>}
+ */
+export async function fetchImageAsBase64(imageUrl) {
+	const response = await fetch(imageUrl);
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch image: ${response.status}`);
+	}
+
+	const contentType = response.headers.get('content-type') || 'image/png';
+	const arrayBuffer = await response.arrayBuffer();
+	const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+	return {
+		base64,
+		mimeType: contentType
+	};
+}

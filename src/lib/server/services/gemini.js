@@ -48,8 +48,7 @@ Rules:
 					]
 				}],
 				generationConfig: {
-					responseModalities: ['image', 'text'],
-					imageSafetySettings: { method: 'CONSERVATIVE' }
+					responseModalities: ['image', 'text']
 				}
 			})
 		}
@@ -146,8 +145,7 @@ Think of it like zooming in 200% on just the ${position.replace('-', ' ')} corne
 					]
 				}],
 				generationConfig: {
-					responseModalities: ['image', 'text'],
-					imageSafetySettings: { method: 'CONSERVATIVE' }
+					responseModalities: ['image', 'text']
 				}
 			})
 		}

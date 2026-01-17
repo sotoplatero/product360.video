@@ -18,19 +18,106 @@
 	let canvasBase64 = $state('');
 	let extractedImages = $state(/** @type {Array<{position: string, base64: string}>} */ ([]));
 
+	// Initialize steps based on current progress
+	function initializeSteps() {
+		const gen = data.generation;
+		const existingImages = data.images || [];
+		const hasImage = !!gen.productImageUrl;
+		const hasCanvas = !!gen.canvasImageUrl;
+		const hasAllImages = existingImages.length >= 4;
+		const hasVideoOperation = !!gen.videoOperationName;
+		const hasVideo = !!gen.videoUrl;
+		const isFailed = gen.status === 'failed';
+
+		// Determine which step failed (the first incomplete step when status is failed)
+		let failedStep = -1;
+		if (isFailed) {
+			if (!hasImage) failedStep = 0;
+			else if (!hasCanvas) failedStep = 1;
+			else if (!hasAllImages) failedStep = 2;
+			else if (!hasVideo) failedStep = 3;
+		}
+
+		return [
+			{
+				name: 'Preparing image',
+				status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ (
+					hasImage ? 'completed' : (failedStep === 0 ? 'error' : 'pending')
+				),
+				message: hasImage ? 'Image ready' : (failedStep === 0 ? (gen.error || 'Failed') : '')
+			},
+			{
+				name: 'Generating product views',
+				status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ (
+					hasCanvas ? 'completed' : (failedStep === 1 ? 'error' : 'pending')
+				),
+				message: hasCanvas ? 'Product views generated' : (failedStep === 1 ? (gen.error || 'Failed') : '')
+			},
+			{
+				name: 'Extracting individual images',
+				status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ (
+					hasAllImages ? 'completed' : (failedStep === 2 ? 'error' : 'pending')
+				),
+				message: hasAllImages ? 'All views extracted' : (failedStep === 2 ? (gen.error || 'Failed') : '')
+			},
+			{
+				name: 'Generating 360° video',
+				status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ (
+					hasVideo ? 'completed' :
+					failedStep === 3 ? 'error' :
+					hasVideoOperation ? 'active' : 'pending'
+				),
+				message: hasVideo ? 'Video generated successfully!' :
+					failedStep === 3 ? (gen.error || 'Failed') :
+					hasVideoOperation ? 'Video is being generated...' : ''
+			}
+		];
+	}
+
 	// Processing steps
-	let steps = $state([
-		{ name: 'Scraping product page', status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ ('pending'), message: '' },
-		{ name: 'Generating product views', status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ ('pending'), message: '' },
-		{ name: 'Extracting individual images', status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ ('pending'), message: '' },
-		{ name: 'Generating 360° video', status: /** @type {'pending' | 'active' | 'completed' | 'error'} */ ('pending'), message: '' }
-	]);
+	let steps = $state(initializeSteps());
 
 	// Derived state
 	let showPayment = $derived(data.generation.status === 'payment_required');
 	let showProcessing = $derived(data.generation.status === 'processing' || isProcessing);
 	let showResults = $derived(data.generation.status === 'completed');
-	let showError = $derived(data.generation.status === 'failed' || currentError);
+
+	// Check if there's an error in any step (including when loaded from failed status)
+	let hasStepError = $derived(steps.some(s => s.status === 'error'));
+
+	// Show progress section when processing, has step error, or status is failed with progress
+	let showProgressSection = $derived(
+		showProcessing ||
+		hasStepError ||
+		(data.generation.status === 'failed' && steps.some(s => s.status === 'completed'))
+	);
+
+	// Retry generation from where it failed
+	async function retryGeneration() {
+		// Reset error state
+		currentError = '';
+
+		// Reset step that had error back to pending
+		for (const step of steps) {
+			if (step.status === 'error') {
+				step.status = 'pending';
+				step.message = '';
+			}
+		}
+
+		// Update status back to processing
+		await fetch('/api/generation', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				generationId: data.generation.id,
+				status: 'processing'
+			})
+		});
+
+		await invalidateAll();
+		startGeneration();
+	}
 
 	// Skip payment and start processing (demo mode)
 	async function skipPayment() {
@@ -53,127 +140,205 @@
 		}
 	}
 
-	// Start the generation process
+	// Start the generation process (with resume support)
 	async function startGeneration() {
 		isProcessing = true;
 		currentError = '';
 
+		// Verificar estado actual para reanudar donde quedó
+		const gen = data.generation;
+		const existingImages = data.images || [];
+		const hasCanvas = !!gen.canvasImageUrl;
+		const hasAllImages = existingImages.length >= 4;
+		const hasVideoOperation = !!gen.videoOperationName;
+		const hasVideo = !!gen.videoUrl;
+
 		try {
-			// Step 1: Scrape product page
+			// Step 1: Get uploaded image as base64 (siempre necesario para pasos posteriores)
 			steps[0].status = 'active';
-			steps[0].message = 'Extracting product image from URL...';
+			steps[0].message = 'Loading product image...';
 
-			const scrapeRes = await fetch('/api/scrape', {
+			const imageRes = await fetch('/api/get-image-base64', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ generationId: data.generation.id })
+				body: JSON.stringify({ generationId: gen.id })
 			});
 
-			const scrapeData = await scrapeRes.json();
-			if (!scrapeRes.ok) throw new Error(scrapeData.error);
+			const imageData = await imageRes.json();
+			if (!imageRes.ok) throw new Error(imageData.error);
 
-			originalImageBase64 = scrapeData.base64;
-			originalImageMimeType = scrapeData.mimeType;
+			originalImageBase64 = imageData.base64;
+			originalImageMimeType = imageData.mimeType;
 			steps[0].status = 'completed';
-			steps[0].message = 'Product image extracted';
+			steps[0].message = 'Image ready';
 
-			// Step 2: Generate canvas
-			steps[1].status = 'active';
-			steps[1].message = 'Creating 4 product views with AI...';
+			// Step 2: Generate canvas (skip si ya existe)
+			if (hasCanvas) {
+				steps[1].status = 'completed';
+				steps[1].message = 'Product views already generated';
+				// Cargar canvas existente para usarlo en paso 3 si es necesario
+				canvasBase64 = ''; // No lo necesitamos si ya tenemos las imágenes
+			} else {
+				steps[1].status = 'active';
+				steps[1].message = 'Creating 4 product views with AI...';
 
-			const canvasRes = await fetch('/api/generate-canvas', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					generationId: data.generation.id,
-					imageBase64: originalImageBase64,
-					mimeType: originalImageMimeType
-				})
-			});
-
-			const canvasData = await canvasRes.json();
-			if (!canvasRes.ok) throw new Error(canvasData.error);
-
-			canvasBase64 = canvasData.canvasBase64;
-			steps[1].status = 'completed';
-			steps[1].message = 'Product views generated';
-
-			// Step 3: Extract quadrants
-			steps[2].status = 'active';
-			const positions = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
-
-			for (let i = 0; i < positions.length; i++) {
-				const position = positions[i];
-				steps[2].message = `Extracting view ${i + 1} of 4...`;
-
-				const extractRes = await fetch('/api/extract-quadrant', {
+				const canvasRes = await fetch('/api/generate-canvas', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						generationId: data.generation.id,
-						canvasBase64,
-						position
+						generationId: gen.id,
+						imageBase64: originalImageBase64,
+						mimeType: originalImageMimeType
 					})
 				});
 
-				const extractData = await extractRes.json();
-				if (!extractRes.ok) throw new Error(extractData.error);
+				const canvasData = await canvasRes.json();
+				if (!canvasRes.ok) throw new Error(canvasData.error);
 
-				extractedImages.push({ position, base64: extractData.imageBase64 });
+				canvasBase64 = canvasData.canvasBase64;
+				steps[1].status = 'completed';
+				steps[1].message = 'Product views generated';
 			}
 
-			steps[2].status = 'completed';
-			steps[2].message = 'All views extracted';
+			// Step 3: Extract quadrants (skip si ya existen las 4 imágenes)
+			if (hasAllImages) {
+				steps[2].status = 'completed';
+				steps[2].message = 'All views already extracted';
+			} else {
+				steps[2].status = 'active';
+				const positions = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+				const existingPositions = existingImages.map((/** @type {{position: string}} */ img) => img.position);
 
-			// Step 4: Generate video
-			steps[3].status = 'active';
-			steps[3].message = 'Starting video generation...';
+				for (let i = 0; i < positions.length; i++) {
+					const position = positions[i];
 
-			const videoRes = await fetch('/api/generate-video', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					generationId: data.generation.id,
-					originalImageBase64,
-					extractedImagesBase64: extractedImages.slice(0, 2).map(img => img.base64)
-				})
-			});
+					// Skip si esta posición ya existe
+					if (existingPositions.includes(position)) {
+						continue;
+					}
 
-			const videoData = await videoRes.json();
-			if (!videoRes.ok) throw new Error(videoData.error);
+					steps[2].message = `Extracting view ${i + 1} of 4...`;
 
-			// Poll for video completion
-			const operationName = videoData.operationName;
-			steps[3].message = 'Video is being generated (this may take a few minutes)...';
+					// Si no tenemos canvas en memoria, necesitamos cargarlo
+					if (!canvasBase64 && hasCanvas) {
+						// Cargar canvas desde R2
+						const canvasRes = await fetch('/api/get-canvas-base64', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ generationId: gen.id })
+						});
+						const canvasData = await canvasRes.json();
+						if (canvasRes.ok) {
+							canvasBase64 = canvasData.base64;
+						}
+					}
 
-			let videoComplete = false;
-			let pollCount = 0;
-			const maxPolls = 60; // ~10 minutes max
+					const extractRes = await fetch('/api/extract-quadrant', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							generationId: gen.id,
+							canvasBase64,
+							position
+						})
+					});
 
-			while (!videoComplete && pollCount < maxPolls) {
-				await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+					const extractData = await extractRes.json();
+					if (!extractRes.ok) throw new Error(extractData.error);
 
-				const statusRes = await fetch(
-					`/api/check-video-status?generationId=${data.generation.id}&operationName=${encodeURIComponent(operationName)}`
-				);
-				const statusData = await statusRes.json();
-
-				if (statusData.error) {
-					throw new Error(statusData.error);
+					extractedImages.push({ position, base64: extractData.imageBase64 });
 				}
 
-				if (statusData.done) {
-					videoComplete = true;
-					steps[3].status = 'completed';
-					steps[3].message = 'Video generated successfully!';
-				} else {
-					pollCount++;
-					steps[3].message = `Video is being generated... (${Math.floor(pollCount * 10 / 60)} min)`;
-				}
+				steps[2].status = 'completed';
+				steps[2].message = 'All views extracted';
 			}
 
-			if (!videoComplete) {
-				throw new Error('Video generation timed out. Please try again.');
+			// Step 4: Generate video (skip si ya existe, continuar polling si hay operación pendiente)
+			if (hasVideo) {
+				steps[3].status = 'completed';
+				steps[3].message = 'Video already generated';
+			} else if (hasVideoOperation) {
+				// Continuar polling de operación existente
+				steps[3].status = 'active';
+				steps[3].message = 'Resuming video generation...';
+
+				let videoComplete = false;
+				let pollCount = 0;
+				const maxPolls = 60;
+
+				while (!videoComplete && pollCount < maxPolls) {
+					const statusRes = await fetch(
+						`/api/check-video-status?generationId=${gen.id}&operationName=${encodeURIComponent(gen.videoOperationName)}`
+					);
+					const statusData = await statusRes.json();
+
+					if (statusData.error) {
+						throw new Error(statusData.error);
+					}
+
+					if (statusData.done) {
+						videoComplete = true;
+						steps[3].status = 'completed';
+						steps[3].message = 'Video generated successfully!';
+					} else {
+						pollCount++;
+						steps[3].message = `Video is being generated... (${Math.floor(pollCount * 10 / 60)} min)`;
+						await new Promise(resolve => setTimeout(resolve, 10000));
+					}
+				}
+
+				if (!videoComplete) {
+					throw new Error('Video generation timed out. Please try again.');
+				}
+			} else {
+				// Iniciar nueva generación de video
+				steps[3].status = 'active';
+				steps[3].message = 'Starting video generation...';
+
+				const videoRes = await fetch('/api/generate-video', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						generationId: gen.id,
+						originalImageBase64
+					})
+				});
+
+				const videoData = await videoRes.json();
+				if (!videoRes.ok) throw new Error(videoData.error);
+
+				const operationName = videoData.operationName;
+				steps[3].message = 'Video is being generated (this may take a few minutes)...';
+
+				let videoComplete = false;
+				let pollCount = 0;
+				const maxPolls = 60;
+
+				while (!videoComplete && pollCount < maxPolls) {
+					await new Promise(resolve => setTimeout(resolve, 10000));
+
+					const statusRes = await fetch(
+						`/api/check-video-status?generationId=${gen.id}&operationName=${encodeURIComponent(operationName)}`
+					);
+					const statusData = await statusRes.json();
+
+					if (statusData.error) {
+						throw new Error(statusData.error);
+					}
+
+					if (statusData.done) {
+						videoComplete = true;
+						steps[3].status = 'completed';
+						steps[3].message = 'Video generated successfully!';
+					} else {
+						pollCount++;
+						steps[3].message = `Video is being generated... (${Math.floor(pollCount * 10 / 60)} min)`;
+					}
+				}
+
+				if (!videoComplete) {
+					throw new Error('Video generation timed out. Please try again.');
+				}
 			}
 
 			// Refresh page data
@@ -228,7 +393,15 @@
 				Back to home
 			</a>
 			<h1 class="text-3xl font-bold text-gray-900">Product Asset Generator</h1>
-			<p class="text-gray-600 mt-2 break-all">{data.generation.productUrl}</p>
+			{#if data.generation.productImageUrl}
+				<div class="mt-4 inline-block">
+					<img
+						src={data.generation.productImageUrl}
+						alt="Product"
+						class="h-20 w-20 object-contain rounded-lg border border-gray-200 bg-white"
+					/>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Payment Section -->
@@ -287,25 +460,31 @@
 			</div>
 		{/if}
 
-		<!-- Processing Section -->
-		{#if showProcessing}
+		<!-- Processing Section (shows progress and errors) -->
+		{#if showProgressSection}
 			<div class="bg-white rounded-2xl shadow-lg p-8">
-				<h2 class="text-2xl font-bold text-gray-900 mb-8 text-center">Generating Your Assets</h2>
+				<h2 class="text-2xl font-bold text-gray-900 mb-8 text-center">
+					{hasStepError && !isProcessing ? 'Generation Error' : 'Generating Your Assets'}
+				</h2>
 				<ProcessingStatus {steps} />
-			</div>
-		{/if}
 
-		<!-- Error Section -->
-		{#if showError && !showProcessing}
-			<div class="bg-red-50 border border-red-200 rounded-2xl p-8 mb-8">
-				<h2 class="text-xl font-bold text-red-700 mb-2">Generation Failed</h2>
-				<p class="text-red-600">{currentError || data.generation.error}</p>
-				<button
-					onclick={skipPayment}
-					class="mt-4 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
-				>
-					Try Again
-				</button>
+				<!-- Retry button when there's an error -->
+				{#if hasStepError && !isProcessing}
+					<div class="mt-6 flex flex-col items-center gap-3">
+						{#if currentError || data.generation.error}
+							<p class="text-red-600 text-sm text-center max-w-md">{currentError || data.generation.error}</p>
+						{/if}
+						<button
+							onclick={retryGeneration}
+							class="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2"
+						>
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+							</svg>
+							Retry from this step
+						</button>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
