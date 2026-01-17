@@ -12,9 +12,9 @@ export async function POST({ request }) {
 		}
 
 		// Validar tipo de archivo
-		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
 		if (!allowedTypes.includes(file.type)) {
-			return json({ error: 'Invalid file type. Allowed: JPEG, PNG, WebP, GIF' }, { status: 400 });
+			return json({ error: 'Invalid file type. Allowed: JPEG, PNG, WebP, GIF, AVIF' }, { status: 400 });
 		}
 
 		// Validar tamaño (max 10MB)

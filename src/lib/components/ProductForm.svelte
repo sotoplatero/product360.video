@@ -7,7 +7,6 @@
 	let previewUrl = $state('');
 	/** @type {File | null} */
 	let selectedFile = $state(null);
-	let isDragging = $state(false);
 
 	/** @type {HTMLInputElement} */
 	let fileInput;
@@ -16,9 +15,9 @@
 	 * @param {File} file
 	 */
 	function handleFile(file) {
-		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
 		if (!allowedTypes.includes(file.type)) {
-			error = 'Invalid file type. Use JPEG, PNG, WebP or GIF';
+			error = 'Invalid file type. Use JPEG, PNG, WebP, GIF or AVIF';
 			return;
 		}
 
@@ -31,24 +30,6 @@
 		error = '';
 		selectedFile = file;
 		previewUrl = URL.createObjectURL(file);
-	}
-
-	/** @param {DragEvent} e */
-	function handleDrop(e) {
-		e.preventDefault();
-		isDragging = false;
-		const file = e.dataTransfer?.files[0];
-		if (file) handleFile(file);
-	}
-
-	/** @param {DragEvent} e */
-	function handleDragOver(e) {
-		e.preventDefault();
-		isDragging = true;
-	}
-
-	function handleDragLeave() {
-		isDragging = false;
 	}
 
 	/** @param {Event} e */
@@ -87,6 +68,12 @@
 				body: formData
 			});
 
+			const contentType = response.headers.get('content-type');
+			if (!contentType || !contentType.includes('application/json')) {
+				const text = await response.text();
+				throw new Error(`Upload failed (${response.status}): ${text.substring(0, 100)}...`);
+			}
+
 			const data = await response.json();
 			if (!response.ok) throw new Error(data.error);
 
@@ -99,76 +86,114 @@
 </script>
 
 <form onsubmit={handleSubmit} class="w-full max-w-2xl mx-auto">
-	<div class="space-y-4">
-		{#if !previewUrl}
-			<!-- Drop zone -->
-			<div
-				role="button"
-				tabindex="0"
-				ondrop={handleDrop}
-				ondragover={handleDragOver}
-				ondragleave={handleDragLeave}
+	{#if !previewUrl}
+		<!-- Upload button -->
+		<div class="flex flex-col items-center gap-4">
+			<button
+				type="button"
 				onclick={() => fileInput.click()}
-				onkeydown={(e) => e.key === 'Enter' && fileInput.click()}
-				class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all {isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}"
+				disabled={disabled}
+				class="relative group cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
 			>
-				<div class="flex flex-col items-center gap-3">
-					<svg class="w-12 h-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-					</svg>
-					<div>
-						<p class="text-gray-700 font-medium">Drop your product image here</p>
-						<p class="text-gray-500 text-sm mt-1">or click to browse</p>
-					</div>
-					<p class="text-xs text-gray-400">JPEG, PNG, WebP or GIF • Max 10MB</p>
-				</div>
-			</div>
+				<!-- Gradient border -->
+				<div
+					class="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-xl opacity-50 group-hover:opacity-100 blur transition duration-500"
+				></div>
 
-			<input
-				bind:this={fileInput}
-				type="file"
-				accept="image/jpeg,image/png,image/webp,image/gif"
-				onchange={handleFileSelect}
-				class="hidden"
-				{disabled}
-			/>
-		{:else}
-			<!-- Preview -->
-			<div class="relative border rounded-lg overflow-hidden">
-				<img src={previewUrl} alt="Preview" class="w-full h-64 object-contain bg-gray-50" />
-				<button
-					type="button"
-					onclick={clearSelection}
-					disabled={disabled || uploading}
-					class="absolute top-2 right-2 p-1.5 bg-white rounded-full shadow hover:bg-gray-100 disabled:opacity-50"
+				<div
+					class="relative flex items-center gap-3 bg-[#171717] rounded-xl px-8 py-4 transition-all group-hover:bg-[#1f1f1f]"
 				>
-					<svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-					</svg>
+					<div
+						class="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center"
+					>
+						<svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+							/>
+						</svg>
+					</div>
+					<span class="text-lg text-white font-medium">Select Product Image</span>
+				</div>
+			</button>
+			<p class="text-sm text-gray-500">JPEG, PNG, WebP, GIF or AVIF • Max 10MB</p>
+		</div>
+
+		<input
+			bind:this={fileInput}
+			type="file"
+			accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+			onchange={handleFileSelect}
+			class="hidden"
+			{disabled}
+		/>
+	{:else}
+		<!-- Preview -->
+		<div class="relative group">
+			<div
+				class="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-2xl opacity-75 blur"
+			></div>
+
+			<div class="relative bg-[#171717] rounded-2xl p-4">
+				<div class="relative aspect-video rounded-xl overflow-hidden bg-black/50">
+					<img src={previewUrl} alt="Preview" class="w-full h-full object-contain" />
+
+					<!-- Remove button -->
+					<button
+						type="button"
+						onclick={clearSelection}
+						disabled={disabled || uploading}
+						class="absolute top-3 right-3 p-2 bg-black/60 rounded-full hover:bg-black/80 transition-colors disabled:opacity-50"
+					>
+						<svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+				</div>
+
+				<!-- Generate button -->
+				<button
+					type="submit"
+					disabled={disabled || uploading}
+					class="w-full mt-4 py-4 gradient-animated rounded-xl font-semibold text-white text-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
+				>
+					{#if uploading}
+						<span class="flex items-center justify-center gap-3">
+							<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+								<circle
+									class="opacity-25"
+									cx="12"
+									cy="12"
+									r="10"
+									stroke="currentColor"
+									stroke-width="4"
+								></circle>
+								<path
+									class="opacity-75"
+									fill="currentColor"
+									d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+								></path>
+							</svg>
+							Uploading...
+						</span>
+					{:else if disabled}
+						Processing...
+					{:else}
+						Generate 360° Content
+					{/if}
 				</button>
 			</div>
-		{/if}
+		</div>
+	{/if}
 
-		{#if error}
-			<p class="text-sm text-red-600">{error}</p>
-		{/if}
-
-		<button
-			type="submit"
-			disabled={disabled || uploading || !selectedFile}
-			class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-		>
-			{#if uploading}
-				Uploading...
-			{:else if disabled}
-				Processing...
-			{:else}
-				Generate Product Assets
-			{/if}
-		</button>
-	</div>
-
-	<p class="mt-4 text-sm text-gray-500 text-center">
-		Upload a product image to generate 360° product images and video.
-	</p>
+	{#if error}
+		<p class="mt-3 text-red-400 text-sm text-center">{error}</p>
+	{/if}
 </form>

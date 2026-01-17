@@ -13,7 +13,9 @@ export async function generateProductCanvas(imageBase64, mimeType = 'image/png')
 		throw new Error('GOOGLE_GEMINI_API_KEY is not configured');
 	}
 
-	const prompt = `You will receive an uploaded product image. Generate four photorealistic images of the same product, maintaining perfect consistency in shape, proportions, colors, textures, reflections, and label design. Only change the rotation angle. Please pick rotation angle and rotation axis that's going to present our product provided the absolute best on an e-commerce product listing page. You must be sure the product is oriented correctly each image.
+	const prompt = `You will receive an uploaded product image. 
+
+Generate four photorealistic images of the same product, maintaining perfect consistency in shape, proportions, colors, textures, reflections, and label design. Only change the rotation angle. Please pick rotation angle and rotation axis that's going to present our product provided the absolute best on an e-commerce product listing page. You must be sure the product is oriented correctly each image.
 
 The final resulting image you generate will be on a 2x2 grid.
 
@@ -31,7 +33,7 @@ Rules:
 - Photorealistic output.`;
 
 	const response = await fetch(
-		`${GEMINI_API_URL}/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${env.GOOGLE_GEMINI_API_KEY}`,
+		`${GEMINI_API_URL}/models/gemini-3-pro-image-preview:generateContent?key=${env.GOOGLE_GEMINI_API_KEY}`,
 		{
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
